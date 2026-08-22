@@ -1,8 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { BroadcastSettings, StreamStats, RemoteControlCommand } from "../types";
+import { BroadcastSettings, StreamStats, RemoteControlCommand, ConnectionMode } from "../types";
 
 export type SignalingState = "idle" | "connecting" | "connected" | "disconnected" | "error";
-export type ConnectionMode = "direct_ip" | "cloud_relay" | "unknown";
 
 export function useWebRTCBroadcaster(
   stream: MediaStream | null,
@@ -230,10 +229,9 @@ export function useWebRTCBroadcaster(
           clearTimeout(connectionHandshakeTimeout);
           connectionHandshakeTimeout = null;
         }
-        sock.onopen = null;
-        sock.onmessage = null;
-        sock.onerror = null;
-        sock.onclose = null;
+        sock.onmessage = () => {};
+        sock.onerror = () => {};
+        sock.onclose = () => {};
         try {
           if (sock.readyState === WebSocket.OPEN) {
             sock.close();
@@ -451,10 +449,9 @@ export function useWebRTCBroadcaster(
 
     if (wsRef.current) {
       const sock = wsRef.current;
-      sock.onopen = null;
-      sock.onmessage = null;
-      sock.onerror = null;
-      sock.onclose = null;
+      sock.onmessage = () => {};
+      sock.onerror = () => {};
+      sock.onclose = () => {};
       try {
         if (sock.readyState === WebSocket.OPEN) {
           sock.close();

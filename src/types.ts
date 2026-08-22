@@ -110,3 +110,5 @@ export interface RemoteControlCommand {
   type: "toggle_torch" | "flip_camera" | "set_zoom" | "take_snapshot" | "toggle_recording" | "set_resolution";
   value?: any;
 }
+
+export type ConnectionMode = "direct_ip" | "cloud_relay" | "unknown" | "direct" | "relay" | "localhost";

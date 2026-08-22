@@ -24,6 +24,10 @@ export function useCameraStream(settings: BroadcastSettings) {
   useEffect(() => {
     async function getDevices() {
       try {
+        if (!navigator?.mediaDevices?.enumerateDevices) {
+          console.warn("navigator.mediaDevices.enumerateDevices is not available in this environment.");
+          return;
+        }
         const devList = await navigator.mediaDevices.enumerateDevices();
         const videoDevs = devList.filter((d) => d.kind === "videoinput");
         setDevices(videoDevs);
@@ -46,6 +50,12 @@ export function useCameraStream(settings: BroadcastSettings) {
       }
       if (audioContextRef.current && audioContextRef.current.state !== "closed") {
         audioContextRef.current.close().catch(() => {});
+      }
+
+      if (!navigator?.mediaDevices?.getUserMedia) {
+        setHasPermission(false);
+        setError("Câmera indisponível: certifique-se de estar usando HTTPS, localhost ou um WebView Android com permissões de hardware liberadas.");
+        return;
       }
 
       const res = RESOLUTION_PRESETS[settings.resolution] || RESOLUTION_PRESETS["1080p30"];

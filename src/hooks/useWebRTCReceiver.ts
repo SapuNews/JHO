@@ -149,10 +149,9 @@ export function useWebRTCReceiver(roomCode: string = "larix-studio-1") {
         try { pc.close(); } catch (e) {}
       }
       if (ws) {
-        ws.onopen = null;
-        ws.onmessage = null;
-        ws.onerror = null;
-        ws.onclose = null;
+        ws.onmessage = () => {};
+        ws.onerror = () => {};
+        ws.onclose = () => {};
         try {
           if (ws.readyState === WebSocket.OPEN) {
             ws.close();

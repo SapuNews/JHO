@@ -4,6 +4,7 @@ import {
   StreamStats,
   RESOLUTION_PRESETS,
   VideoResolution,
+  ConnectionMode,
 } from "../types";
 import { AudioVuMeter } from "./AudioVuMeter";
 import {
@@ -37,6 +38,7 @@ import {
   ArrowRightLeft,
   Sun,
   Zap,
+  RefreshCw,
 } from "lucide-react";
 import QRCode from "qrcode";
 
@@ -52,7 +54,7 @@ interface BroadcastViewProps {
   signalingState?: "idle" | "connecting" | "connected" | "disconnected" | "error";
   signalingError?: string | null;
   resolvedWsUrl?: string;
-  connectionMode?: "direct" | "relay" | "localhost";
+  connectionMode?: ConnectionMode;
   onStartBroadcast: () => void;
   onStopBroadcast: () => void;
   isRecordingLocal: boolean;
@@ -330,11 +332,33 @@ export const BroadcastView: React.FC<BroadcastViewProps> = ({
             }}
           />
         ) : (
-          <div className="text-center p-6 text-neutral-500 flex flex-col items-center gap-3">
-            <CameraOff className="w-12 h-12 text-neutral-600 animate-pulse" />
-            <p className="text-sm font-medium text-neutral-400">
-              {error || "Iniciando câmera e microfone de alta fidelidade..."}
-            </p>
+          <div className="text-center p-6 text-neutral-400 flex flex-col items-center gap-4 max-w-md mx-auto z-10">
+            <div className="p-4 bg-neutral-900/90 border border-white/10 rounded-2xl shadow-xl">
+              <CameraOff className="w-10 h-10 text-amber-400 animate-pulse" />
+            </div>
+            <div className="space-y-1">
+              <h3 className="text-base font-bold text-white">Aguardando Acesso à Câmera</h3>
+              <p className="text-xs font-mono text-neutral-400 leading-relaxed">
+                {error || "Inicializando sensor de imagem e microfone..."}
+              </p>
+            </div>
+            {error && (
+              <div className="flex flex-wrap items-center justify-center gap-2 pt-2">
+                <button
+                  onClick={() => window.location.reload()}
+                  className="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-black text-xs font-bold font-mono rounded-xl transition-all shadow-md active:scale-95 flex items-center space-x-1.5"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  <span>Tentar Novamente</span>
+                </button>
+                <button
+                  onClick={onOpenApkExport}
+                  className="px-4 py-2 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 text-xs font-mono rounded-xl border border-white/10 transition-all active:scale-95"
+                >
+                  Guia de Permissões Android
+                </button>
+              </div>
+            )}
           </div>
         )}
 
