@@ -59,6 +59,7 @@ export interface BroadcastSettings {
   aspectRatio: "16:9" | "9:16" | "4:3";
   facingMode: "environment" | "user";
   zoom: number;
+  exposureCompensation?: number; // -2 to +2 EV
   torch: boolean;
   gridOverlay: "none" | "ruleOfThirds" | "crosshair" | "golden";
   // Audio

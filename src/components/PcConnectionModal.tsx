@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { BroadcastSettings } from "../types";
-import { Laptop, Wifi, CheckCircle2, AlertCircle, RefreshCw, Copy, Check, Terminal, ShieldAlert, Zap, X } from "lucide-react";
+import { Laptop, Wifi, CheckCircle2, AlertCircle, RefreshCw, Copy, Check, Terminal, ShieldAlert, Zap, X, Search, Globe, Network } from "lucide-react";
 
 interface PcConnectionModalProps {
   isOpen: boolean;
@@ -27,24 +27,27 @@ export const PcConnectionModal: React.FC<PcConnectionModalProps> = ({
   const [testStatus, setTestStatus] = useState<"idle" | "testing" | "success" | "error">("idle");
   const [testMessage, setTestMessage] = useState<string>("");
   const [testLatency, setTestLatency] = useState<number | null>(null);
+  const [isScanning, setIsScanning] = useState<boolean>(false);
+  const [scanProgress, setScanProgress] = useState<string>("");
+  const [foundIps, setFoundIps] = useState<{ ip: string; latency: number }[]>([]);
   const [copiedCmd, setCopiedCmd] = useState<boolean>(false);
   const [activeGuideTab, setActiveGuideTab] = useState<"windows" | "mac" | "firewall">("windows");
 
   if (!isOpen) return null;
 
-  const handleTestConnection = async () => {
+  const handleTestConnection = async (ipToTest?: string) => {
+    const targetToPing = (ipToTest || pcIp).trim();
     setTestStatus("testing");
-    setTestMessage("Enviando ping para o IP do PC...");
+    setTestMessage(`Enviando ping para http://${targetToPing}:${pcPort}/api/ping...`);
     setTestLatency(null);
 
     const startTime = performance.now();
-    const cleanIp = pcIp.trim();
 
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 3500);
 
-      const targetUrl = `http://${cleanIp}:${pcPort}/api/ping`;
+      const targetUrl = `http://${targetToPing}:${pcPort}/api/ping`;
       const response = await fetch(targetUrl, {
         method: "GET",
         signal: controller.signal,
@@ -57,19 +60,99 @@ export const PcConnectionModal: React.FC<PcConnectionModalProps> = ({
       if (response.ok) {
         setTestStatus("success");
         setTestLatency(elapsed);
-        setTestMessage(`Conectado com sucesso ao servidor do PC em ${elapsed}ms! Pronto para transmitir.`);
+        setTestMessage(`Conectado com sucesso ao servidor do PC (${targetToPing}:${pcPort}) em ${elapsed}ms! Pronto para transmitir.`);
+        if (ipToTest) setPcIp(ipToTest);
       } else {
         setTestStatus("error");
-        setTestMessage(`Servidor respondeu com status HTTP ${response.status}. Verifique se a aplicação está rodando na porta ${pcPort}.`);
+        setTestMessage(`Servidor respondeu com status HTTP ${response.status}. Verifique se o servidor está rodando na porta ${pcPort}.`);
       }
     } catch (err: any) {
       const elapsed = Math.round(performance.now() - startTime);
       setTestStatus("error");
       if (err.name === "AbortError") {
-        setTestMessage(`Tempo esgotado (Timeout). O IP ${cleanIp}:${pcPort} não respondeu. Verifique se o PC e o celular estão no mesmo Wi-Fi e se o Firewall do Windows está liberando a porta ${pcPort}.`);
+        setTestMessage(`Tempo esgotado (Timeout). O IP ${targetToPing}:${pcPort} não respondeu. Certifique-se de que o PC e o celular estão no mesmo Wi-Fi e que a porta ${pcPort} está liberada no Firewall.`);
       } else {
-        setTestMessage(`Falha na conexão com http://${cleanIp}:${pcPort}. Dica: certifique-se de que o servidor no PC está aberto e os aparelhos estão no mesmo roteador.`);
+        setTestMessage(`Falha na conexão com http://${targetToPing}:${pcPort}. O aplicativo usará o modo de Sala P2P automática caso este IP direto não responda.`);
       }
+    }
+  };
+
+  // Automated LAN IP Scanner for discovering the PC in the local network
+  const handleAutoScanNetwork = async () => {
+    setIsScanning(true);
+    setFoundIps([]);
+    setTestStatus("idle");
+    setScanProgress("Iniciando varredura rápida na rede local...");
+
+    // Determine base subnet
+    let basePrefix = "192.168.1.";
+    if (pcIp.includes(".")) {
+      const parts = pcIp.split(".");
+      if (parts.length >= 3) {
+        basePrefix = `${parts[0]}.${parts[1]}.${parts[2]}.`;
+      }
+    }
+
+    const discovered: { ip: string; latency: number }[] = [];
+    // Scan high probability host IPs (e.g. 1 to 25, 100 to 125, 200 to 220)
+    const targetsToScan: string[] = [];
+    const ranges = [
+      [1, 25],
+      [100, 130],
+      [200, 220],
+    ];
+
+    for (const [start, end] of ranges) {
+      for (let i = start; i <= end; i++) {
+        targetsToScan.push(`${basePrefix}${i}`);
+      }
+    }
+
+    // Also scan common router hotspot subnets if current isn't standard
+    if (!basePrefix.startsWith("192.168.0.")) targetsToScan.push("192.168.0.100", "192.168.0.101", "192.168.0.2");
+    if (!basePrefix.startsWith("192.168.15.")) targetsToScan.push("192.168.15.100", "192.168.15.1");
+
+    const batchSize = 10;
+    for (let i = 0; i < targetsToScan.length; i += batchSize) {
+      const batch = targetsToScan.slice(i, i + batchSize);
+      setScanProgress(`Testando IPs ${i + 1}/${targetsToScan.length} (${batch[0]}...)...`);
+
+      await Promise.all(
+        batch.map(async (ip) => {
+          try {
+            const controller = new AbortController();
+            const tid = setTimeout(() => controller.abort(), 1200);
+            const start = performance.now();
+            const res = await fetch(`http://${ip}:${pcPort}/api/ping`, {
+              signal: controller.signal,
+              headers: { Accept: "application/json" },
+            });
+            clearTimeout(tid);
+            if (res.ok) {
+              const lat = Math.round(performance.now() - start);
+              discovered.push({ ip, latency: lat });
+              setFoundIps([...discovered]);
+            }
+          } catch (e) {}
+        })
+      );
+
+      if (discovered.length > 0) {
+        break; // Stop early once PC found
+      }
+    }
+
+    setIsScanning(false);
+    if (discovered.length > 0) {
+      const best = discovered[0];
+      setPcIp(best.ip);
+      setTestStatus("success");
+      setTestLatency(best.latency);
+      setTestMessage(`Computador receptor encontrado com sucesso no IP ${best.ip}:${pcPort} (${best.latency}ms)!`);
+    } else {
+      setScanProgress("");
+      setTestStatus("error");
+      setTestMessage(`Nenhum computador encontrado na faixa ${basePrefix}x. Digite manualmente o IP do seu PC ou utilize o modo de Sala P2P.`);
     }
   };
 
@@ -271,26 +354,89 @@ export const PcConnectionModal: React.FC<PcConnectionModalProps> = ({
               </div>
             </div>
 
-            {/* Test Connection Button */}
-            <div className="pt-2">
+            {/* Auto Scanner & Test Connection Buttons */}
+            <div className="pt-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
               <button
-                onClick={handleTestConnection}
-                disabled={testStatus === "testing" || !pcIp.trim()}
+                onClick={handleAutoScanNetwork}
+                disabled={isScanning || testStatus === "testing"}
+                className="w-full py-2.5 bg-neutral-950 hover:bg-neutral-900 border border-cyan-500/50 hover:border-cyan-400 text-cyan-400 text-xs font-mono font-bold uppercase tracking-wider rounded-xl flex items-center justify-center space-x-2 transition-all disabled:opacity-50 shadow-md"
+              >
+                {isScanning ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin text-cyan-400" />
+                    <span>Buscando na Rede...</span>
+                  </>
+                ) : (
+                  <>
+                    <Search className="w-4 h-4 text-cyan-400" />
+                    <span>Auto-Detectar PC Receptor</span>
+                  </>
+                )}
+              </button>
+
+              <button
+                onClick={() => handleTestConnection()}
+                disabled={testStatus === "testing" || isScanning || !pcIp.trim()}
                 className="w-full py-2.5 bg-neutral-950 hover:bg-neutral-900 border border-emerald-500/50 hover:border-emerald-400 text-emerald-400 text-xs font-mono font-bold uppercase tracking-wider rounded-xl flex items-center justify-center space-x-2 transition-all disabled:opacity-50 shadow-md"
               >
                 {testStatus === "testing" ? (
                   <>
                     <RefreshCw className="w-4 h-4 animate-spin text-emerald-400" />
-                    <span>Testando Conexão com {pcIp}:{pcPort}...</span>
+                    <span>Testando Ping...</span>
                   </>
                 ) : (
                   <>
                     <Zap className="w-4 h-4 text-emerald-400" />
-                    <span>Testar Conexão / Ping com o PC</span>
+                    <span>Testar Ping Manual</span>
                   </>
                 )}
               </button>
             </div>
+
+            {/* Scan Progress Bar */}
+            {isScanning && (
+              <div className="p-3 bg-neutral-950/80 border border-cyan-500/40 rounded-xl space-y-1.5 animate-fade-in">
+                <div className="flex items-center justify-between text-[11px] font-mono text-cyan-300">
+                  <span>{scanProgress}</span>
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin text-cyan-400" />
+                </div>
+                <div className="w-full bg-neutral-900 h-1.5 rounded-full overflow-hidden">
+                  <div className="bg-gradient-to-r from-cyan-500 to-emerald-400 h-full w-full animate-pulse rounded-full" />
+                </div>
+              </div>
+            )}
+
+            {/* Discovered PCs List */}
+            {foundIps.length > 0 && (
+              <div className="p-3 bg-emerald-950/30 border border-emerald-500/40 rounded-xl space-y-2 animate-fade-in">
+                <span className="text-[10px] font-mono uppercase font-bold text-emerald-400 block">
+                  Computadores Encontrados na Rede ({foundIps.length}):
+                </span>
+                <div className="space-y-1.5">
+                  {foundIps.map((item) => (
+                    <div
+                      key={item.ip}
+                      className="flex items-center justify-between p-2 bg-black/60 border border-emerald-500/30 rounded-lg"
+                    >
+                      <div className="flex items-center space-x-2 font-mono text-xs text-white">
+                        <Laptop className="w-3.5 h-3.5 text-emerald-400" />
+                        <span className="font-bold text-emerald-300">{item.ip}:{pcPort}</span>
+                        <span className="text-[10px] text-neutral-400">({item.latency}ms)</span>
+                      </div>
+                      <button
+                        onClick={() => {
+                          setPcIp(item.ip);
+                          handleTestConnection(item.ip);
+                        }}
+                        className="px-2.5 py-1 bg-emerald-500 hover:bg-emerald-400 text-black text-[10px] font-mono font-bold uppercase rounded-md transition-colors"
+                      >
+                        Selecionar
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Interactive Tutorial: How to find PC IP */}

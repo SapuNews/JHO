@@ -35,6 +35,8 @@ import {
   Volume2,
   Layers,
   ArrowRightLeft,
+  Sun,
+  Zap,
 } from "lucide-react";
 import QRCode from "qrcode";
 
@@ -50,6 +52,7 @@ interface BroadcastViewProps {
   signalingState?: "idle" | "connecting" | "connected" | "disconnected" | "error";
   signalingError?: string | null;
   resolvedWsUrl?: string;
+  connectionMode?: "direct" | "relay" | "localhost";
   onStartBroadcast: () => void;
   onStopBroadcast: () => void;
   isRecordingLocal: boolean;
@@ -59,6 +62,7 @@ interface BroadcastViewProps {
   onFlipCamera: () => void;
   onToggleTorch: (val: boolean) => void;
   onSetZoom: (zoom: number) => void;
+  onSetExposure?: (exp: number) => void;
   onTakeSnapshot: () => void;
   audioLevel: { peakDb: number; rmsDb: number };
   onOpenSettings: () => void;
@@ -80,6 +84,7 @@ export const BroadcastView: React.FC<BroadcastViewProps> = ({
   signalingState = "idle",
   signalingError,
   resolvedWsUrl,
+  connectionMode = "direct",
   onStartBroadcast,
   onStopBroadcast,
   isRecordingLocal,
@@ -89,6 +94,7 @@ export const BroadcastView: React.FC<BroadcastViewProps> = ({
   onFlipCamera,
   onToggleTorch,
   onSetZoom,
+  onSetExposure,
   onTakeSnapshot,
   audioLevel,
   onOpenSettings,
@@ -106,6 +112,11 @@ export const BroadcastView: React.FC<BroadcastViewProps> = ({
   const [focusPoint, setFocusPoint] = useState<{ x: number; y: number } | null>(null);
   const [isShutterFlashing, setIsShutterFlashing] = useState<boolean>(false);
   const [showZoomPresets, setShowZoomPresets] = useState<boolean>(false);
+  const [showExposureControl, setShowExposureControl] = useState<boolean>(false);
+
+  // Touch gesture state for pinch-to-zoom
+  const touchDistanceRef = useRef<number | null>(null);
+  const initialZoomRef = useRef<number>(settings.zoom || 1.0);
 
   // Bind media stream to video element
   useEffect(() => {
@@ -127,13 +138,76 @@ export const BroadcastView: React.FC<BroadcastViewProps> = ({
       .catch(console.warn);
   }, [receiverUrl]);
 
-  const toggleFullscreen = () => {
-    if (!document.fullscreenElement) {
-      document.documentElement.requestFullscreen().catch(() => {});
-      setIsFullscreen(true);
-    } else {
-      document.exitFullscreen().catch(() => {});
-      setIsFullscreen(false);
+  // Listen for fullscreenchange events (e.g. if user exits with Android swipe/back gesture)
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      const isCurrentlyFullscreen = !!(
+        document.fullscreenElement ||
+        (document as any).webkitFullscreenElement ||
+        (document as any).mozFullScreenElement ||
+        (document as any).msFullscreenElement
+      );
+      setIsFullscreen(isCurrentlyFullscreen);
+    };
+
+    document.addEventListener("fullscreenchange", handleFullscreenChange);
+    document.addEventListener("webkitfullscreenchange", handleFullscreenChange);
+    document.addEventListener("mozfullscreenchange", handleFullscreenChange);
+    document.addEventListener("MSFullscreenChange", handleFullscreenChange);
+
+    return () => {
+      document.removeEventListener("fullscreenchange", handleFullscreenChange);
+      document.removeEventListener("webkitfullscreenchange", handleFullscreenChange);
+      document.removeEventListener("mozfullscreenchange", handleFullscreenChange);
+      document.removeEventListener("MSFullscreenChange", handleFullscreenChange);
+    };
+  }, []);
+
+  const triggerHaptic = (durationMs = 30) => {
+    try {
+      if (typeof navigator !== "undefined" && navigator.vibrate) {
+        navigator.vibrate(durationMs);
+      }
+    } catch (e) {}
+  };
+
+  const toggleFullscreen = async () => {
+    triggerHaptic(25);
+    try {
+      const doc = document as any;
+      const docEl = document.documentElement as any;
+      const isCurrentlyFullscreen = !!(
+        doc.fullscreenElement ||
+        doc.webkitFullscreenElement ||
+        doc.mozFullScreenElement ||
+        doc.msFullscreenElement
+      );
+
+      if (!isCurrentlyFullscreen) {
+        if (docEl.requestFullscreen) {
+          await docEl.requestFullscreen({ navigationUI: "hide" });
+        } else if (docEl.webkitRequestFullscreen) {
+          await docEl.webkitRequestFullscreen();
+        } else if (docEl.mozRequestFullScreen) {
+          await docEl.mozRequestFullScreen();
+        } else if (docEl.msRequestFullscreen) {
+          await docEl.msRequestFullscreen();
+        }
+        setIsFullscreen(true);
+      } else {
+        if (doc.exitFullscreen) {
+          await doc.exitFullscreen();
+        } else if (doc.webkitExitFullscreen) {
+          await doc.webkitExitFullscreen();
+        } else if (doc.mozCancelFullScreen) {
+          await doc.mozCancelFullScreen();
+        } else if (doc.msExitFullscreen) {
+          await doc.msExitFullscreen();
+        }
+        setIsFullscreen(false);
+      }
+    } catch (e) {
+      console.warn("Fullscreen toggle error:", e);
     }
   };
 
@@ -148,17 +222,30 @@ export const BroadcastView: React.FC<BroadcastViewProps> = ({
   };
 
   const handleZoomChange = (val: number) => {
-    onUpdateSettings({ ...settings, zoom: val });
-    onSetZoom(val);
+    triggerHaptic(15);
+    const clamped = Math.max(0.5, Math.min(8, Number(val.toFixed(1))));
+    onUpdateSettings({ ...settings, zoom: clamped });
+    onSetZoom(clamped);
+  };
+
+  const handleExposureChange = (val: number) => {
+    triggerHaptic(15);
+    const clamped = Math.max(-2, Math.min(2, Number(val.toFixed(1))));
+    onUpdateSettings({ ...settings, exposureCompensation: clamped });
+    if (onSetExposure) {
+      onSetExposure(clamped);
+    }
   };
 
   const handleTorchToggle = () => {
+    triggerHaptic(40);
     const newVal = !settings.torch;
     onUpdateSettings({ ...settings, torch: newVal });
     onToggleTorch(newVal);
   };
 
   const cycleGrid = () => {
+    triggerHaptic(20);
     const modes: ("none" | "ruleOfThirds" | "crosshair" | "golden")[] = ["none", "ruleOfThirds", "crosshair", "golden"];
     const currentIdx = modes.indexOf(settings.gridOverlay);
     const nextIdx = (currentIdx + 1) % modes.length;
@@ -166,22 +253,50 @@ export const BroadcastView: React.FC<BroadcastViewProps> = ({
   };
 
   const handleViewfinderClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    // If drawer is open, close it
     if (isDrawerOpen) {
       setIsDrawerOpen(false);
       return;
     }
-    // Show focus reticle at tap location
     const rect = e.currentTarget.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
     setFocusPoint({ x, y });
+    triggerHaptic(25);
     setTimeout(() => {
       setFocusPoint(null);
     }, 1800);
   };
 
+  // Touch handlers for mobile pinch-to-zoom
+  const handleTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (e.touches.length === 2) {
+      const dist = Math.hypot(
+        e.touches[0].clientX - e.touches[1].clientX,
+        e.touches[0].clientY - e.touches[1].clientY
+      );
+      touchDistanceRef.current = dist;
+      initialZoomRef.current = settings.zoom || 1.0;
+    }
+  };
+
+  const handleTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (e.touches.length === 2 && touchDistanceRef.current !== null) {
+      const currentDist = Math.hypot(
+        e.touches[0].clientX - e.touches[1].clientX,
+        e.touches[0].clientY - e.touches[1].clientY
+      );
+      const scaleFactor = currentDist / touchDistanceRef.current;
+      const targetZoom = initialZoomRef.current * scaleFactor;
+      handleZoomChange(targetZoom);
+    }
+  };
+
+  const handleTouchEnd = () => {
+    touchDistanceRef.current = null;
+  };
+
   const handleSnapshotClick = () => {
+    triggerHaptic(60);
     setIsShutterFlashing(true);
     setTimeout(() => setIsShutterFlashing(false), 200);
     onTakeSnapshot();
@@ -192,7 +307,10 @@ export const BroadcastView: React.FC<BroadcastViewProps> = ({
       {/* 1. Camera Viewport & Framing Guides (Layer 0 - Unobstructed Fullscreen) */}
       <div
         onClick={handleViewfinderClick}
-        className="absolute inset-0 z-0 bg-black flex items-center justify-center overflow-hidden cursor-crosshair"
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+        className="absolute inset-0 z-0 bg-black flex items-center justify-center overflow-hidden cursor-crosshair touch-none"
       >
         {stream ? (
           <video
@@ -200,7 +318,7 @@ export const BroadcastView: React.FC<BroadcastViewProps> = ({
             autoPlay
             playsInline
             muted
-            className="w-full h-full object-cover transition-transform duration-200 origin-center"
+            className="w-full h-full object-cover transition-transform duration-150 origin-center"
             style={{
               transform: `scale(${settings.zoom || 1.0}) ${settings.facingMode === "user" ? "scaleX(-1)" : ""}`,
               aspectRatio:
@@ -337,8 +455,31 @@ export const BroadcastView: React.FC<BroadcastViewProps> = ({
             </div>
           </div>
 
-          {/* Right: Clean View Toggle, Battery, Drawer Opener */}
-          <div className="flex items-center space-x-1.5 sm:space-x-2">
+          {/* Right: Fullscreen Toggle, Clean View, QR Link, Battery, Drawer */}
+          <div className="flex items-center space-x-1 sm:space-x-2">
+            {/* Fullscreen API Toggle Button */}
+            <button
+              onClick={toggleFullscreen}
+              className={`p-1.5 sm:px-2.5 sm:py-1 border rounded-full flex items-center space-x-1 transition-all ${
+                isFullscreen
+                  ? "bg-emerald-500/20 border-emerald-500 text-emerald-400 font-bold shadow-sm"
+                  : "bg-black/40 hover:bg-neutral-800 border-white/10 hover:border-white/30 text-neutral-300 text-[10px] font-mono"
+              }`}
+              title={isFullscreen ? "Sair da Tela Cheia" : "Modo Tela Cheia (Ocultar barras do Android)"}
+            >
+              {isFullscreen ? (
+                <>
+                  <Minimize2 className="w-3.5 h-3.5 text-emerald-400" />
+                  <span className="hidden sm:inline">Normal</span>
+                </>
+              ) : (
+                <>
+                  <Maximize2 className="w-3.5 h-3.5 text-cyan-400" />
+                  <span className="hidden sm:inline">Tela Cheia</span>
+                </>
+              )}
+            </button>
+
             {/* Clean View Toggle */}
             <button
               onClick={() => setIsCleanMode(true)}
@@ -391,13 +532,26 @@ export const BroadcastView: React.FC<BroadcastViewProps> = ({
             <span className="text-xs font-mono font-bold">{isLive ? `LIVE ${formatTime(liveDuration)}` : "STANDBY"}</span>
           </div>
 
-          <button
-            onClick={() => setIsCleanMode(false)}
-            className="pointer-events-auto px-3.5 py-1.5 rounded-full bg-black/70 hover:bg-black/90 backdrop-blur-xl border border-white/30 text-white text-xs font-mono font-bold flex items-center space-x-1.5 transition-all shadow-2xl active:scale-95"
-          >
-            <EyeOff className="w-3.5 h-3.5 text-emerald-400" />
-            <span>Restaurar HUD</span>
-          </button>
+          <div className="pointer-events-auto flex items-center space-x-2">
+            <button
+              onClick={toggleFullscreen}
+              className="p-2 rounded-full bg-black/70 hover:bg-black/90 backdrop-blur-xl border border-white/30 text-white transition-all shadow-2xl active:scale-95"
+              title={isFullscreen ? "Sair da Tela Cheia" : "Modo Tela Cheia"}
+            >
+              {isFullscreen ? (
+                <Minimize2 className="w-3.5 h-3.5 text-emerald-400" />
+              ) : (
+                <Maximize2 className="w-3.5 h-3.5 text-cyan-400" />
+              )}
+            </button>
+            <button
+              onClick={() => setIsCleanMode(false)}
+              className="px-3.5 py-1.5 rounded-full bg-black/70 hover:bg-black/90 backdrop-blur-xl border border-white/30 text-white text-xs font-mono font-bold flex items-center space-x-1.5 transition-all shadow-2xl active:scale-95"
+            >
+              <EyeOff className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Restaurar HUD</span>
+            </button>
+          </div>
         </div>
       )}
 
@@ -420,8 +574,19 @@ export const BroadcastView: React.FC<BroadcastViewProps> = ({
       {/* 3. Floating Quick Lens / Zoom Pills (Right Center - Non-intrusive) */}
       {!isCleanMode && (
         <div className="relative z-10 flex-1 flex items-center justify-end px-3 sm:px-6 pointer-events-none">
-          {/* Subtle Zoom Preset Ring */}
+          {/* Subtle Zoom & Exposure Preset Ring */}
           <div className="pointer-events-auto flex flex-col items-center space-y-2 backdrop-blur-xl bg-black/40 border border-white/10 p-1.5 rounded-full shadow-2xl">
+            <button
+              onClick={() => handleZoomChange(0.5)}
+              className={`w-9 h-9 rounded-full text-[11px] font-mono font-bold flex items-center justify-center transition-all ${
+                settings.zoom === 0.5
+                  ? "bg-white text-black shadow-md"
+                  : "text-neutral-300 hover:text-white hover:bg-white/10"
+              }`}
+              title="Ultra-Wide 0.5x"
+            >
+              .5X
+            </button>
             <button
               onClick={() => handleZoomChange(1.0)}
               className={`w-9 h-9 rounded-full text-xs font-mono font-bold flex items-center justify-center transition-all ${
@@ -453,31 +618,90 @@ export const BroadcastView: React.FC<BroadcastViewProps> = ({
               3X
             </button>
             <button
-              onClick={() => setShowZoomPresets(!showZoomPresets)}
-              className="w-9 h-9 rounded-full bg-neutral-900/80 hover:bg-neutral-800 text-neutral-300 hover:text-white flex items-center justify-center transition-all border border-white/10"
-              title="Ajuste Fino de Zoom"
+              onClick={() => handleZoomChange(5.0)}
+              className={`w-9 h-9 rounded-full text-xs font-mono font-bold flex items-center justify-center transition-all ${
+                settings.zoom === 5.0
+                  ? "bg-white text-black shadow-md"
+                  : "text-neutral-300 hover:text-white hover:bg-white/10"
+              }`}
+            >
+              5X
+            </button>
+
+            {/* Slider Popout Trigger */}
+            <button
+              onClick={() => {
+                setShowZoomPresets(!showZoomPresets);
+                setShowExposureControl(false);
+              }}
+              className={`w-9 h-9 rounded-full flex items-center justify-center transition-all border ${
+                showZoomPresets
+                  ? "bg-emerald-500 text-black border-emerald-400"
+                  : "bg-neutral-900/80 hover:bg-neutral-800 text-neutral-300 hover:text-white border-white/10"
+              }`}
+              title="Ajuste Contínuo de Zoom"
             >
               <Focus className="w-3.5 h-3.5" />
+            </button>
+
+            {/* Exposure Popout Trigger */}
+            <button
+              onClick={() => {
+                setShowExposureControl(!showExposureControl);
+                setShowZoomPresets(false);
+              }}
+              className={`w-9 h-9 rounded-full flex items-center justify-center transition-all border ${
+                showExposureControl
+                  ? "bg-amber-400 text-black border-amber-300"
+                  : "bg-neutral-900/80 hover:bg-neutral-800 text-neutral-300 hover:text-white border-white/10"
+              }`}
+              title="Compensação de Exposição / Luz"
+            >
+              <Sun className="w-3.5 h-3.5" />
             </button>
           </div>
 
           {/* Fine Zoom Slider Popout */}
           {showZoomPresets && (
-            <div className="pointer-events-auto mr-3 p-3 backdrop-blur-2xl bg-black/75 border border-white/15 rounded-2xl flex flex-col items-center space-y-2 shadow-2xl animate-fade-in">
+            <div className="pointer-events-auto mr-3 p-3 backdrop-blur-2xl bg-black/85 border border-white/15 rounded-2xl flex flex-col items-center space-y-2 shadow-2xl animate-fade-in">
               <span className="text-[11px] font-mono font-bold text-emerald-400">
                 {settings.zoom.toFixed(1)}X ZOOM
               </span>
               <input
                 type="range"
-                min={1}
-                max={6}
+                min={0.5}
+                max={8}
                 step={0.1}
                 value={settings.zoom}
                 onChange={(e) => handleZoomChange(parseFloat(e.target.value))}
-                className="w-24 h-1 accent-emerald-400 bg-neutral-800 cursor-pointer -rotate-90 my-8"
+                className="w-28 h-1.5 accent-emerald-400 bg-neutral-800 cursor-pointer -rotate-90 my-10"
               />
               <button
                 onClick={() => setShowZoomPresets(false)}
+                className="text-[10px] font-mono text-neutral-400 hover:text-white uppercase"
+              >
+                Fechar
+              </button>
+            </div>
+          )}
+
+          {/* Exposure Slider Popout */}
+          {showExposureControl && (
+            <div className="pointer-events-auto mr-3 p-3 backdrop-blur-2xl bg-black/85 border border-white/15 rounded-2xl flex flex-col items-center space-y-2 shadow-2xl animate-fade-in">
+              <span className="text-[11px] font-mono font-bold text-amber-400">
+                {(settings.exposureCompensation || 0) > 0 ? `+${settings.exposureCompensation}` : settings.exposureCompensation || 0} EV
+              </span>
+              <input
+                type="range"
+                min={-2}
+                max={2}
+                step={0.2}
+                value={settings.exposureCompensation || 0}
+                onChange={(e) => handleExposureChange(parseFloat(e.target.value))}
+                className="w-28 h-1.5 accent-amber-400 bg-neutral-800 cursor-pointer -rotate-90 my-10"
+              />
+              <button
+                onClick={() => setShowExposureControl(false)}
                 className="text-[10px] font-mono text-neutral-400 hover:text-white uppercase"
               >
                 Fechar
@@ -523,7 +747,10 @@ export const BroadcastView: React.FC<BroadcastViewProps> = ({
                 <div className="grid grid-cols-2 gap-2">
                   {/* Flip Camera */}
                   <button
-                    onClick={onFlipCamera}
+                    onClick={() => {
+                      triggerHaptic(30);
+                      onFlipCamera();
+                    }}
                     className="p-3 bg-neutral-900/80 hover:bg-neutral-800 border border-white/10 rounded-xl flex flex-col items-center justify-center space-y-1.5 transition-all text-neutral-200"
                   >
                     <ArrowRightLeft className="w-4 h-4 text-emerald-400" />
@@ -568,7 +795,63 @@ export const BroadcastView: React.FC<BroadcastViewProps> = ({
                     <Sparkles className="w-4 h-4 text-amber-400" />
                     <span className="text-[10px] font-mono font-bold">Foto Snapshot</span>
                   </button>
+
+                  {/* Fullscreen API Toggle */}
+                  <button
+                    onClick={toggleFullscreen}
+                    className={`p-3 border rounded-xl flex flex-col items-center justify-center space-y-1.5 transition-all ${
+                      isFullscreen
+                        ? "bg-emerald-500/20 border-emerald-500 text-emerald-400 font-bold"
+                        : "bg-neutral-900/80 hover:bg-neutral-800 border-white/10 text-neutral-200"
+                    }`}
+                  >
+                    {isFullscreen ? (
+                      <>
+                        <Minimize2 className="w-4 h-4 text-emerald-400" />
+                        <span className="text-[10px] font-mono font-bold">Sair Tela Cheia</span>
+                      </>
+                    ) : (
+                      <>
+                        <Maximize2 className="w-4 h-4 text-cyan-400" />
+                        <span className="text-[10px] font-mono font-bold">Tela Cheia</span>
+                      </>
+                    )}
+                  </button>
+
+                  {/* PC Connection Setup */}
+                  <button
+                    onClick={() => {
+                      setIsDrawerOpen(false);
+                      onOpenPcConnection();
+                    }}
+                    className="p-3 bg-neutral-900/80 hover:bg-neutral-800 border border-white/10 rounded-xl flex flex-col items-center justify-center space-y-1.5 transition-all text-neutral-200"
+                  >
+                    <Laptop className="w-4 h-4 text-cyan-400" />
+                    <span className="text-[10px] font-mono font-bold">Conectar ao PC</span>
+                  </button>
                 </div>
+              </div>
+
+              {/* Exposure Compensation in Drawer */}
+              <div className="bg-neutral-900/60 border border-white/10 rounded-xl p-3 space-y-2">
+                <div className="flex items-center justify-between text-xs font-mono">
+                  <span className="text-neutral-400 flex items-center space-x-1.5">
+                    <Sun className="w-3.5 h-3.5 text-amber-400" />
+                    <span>Compensação de Luz:</span>
+                  </span>
+                  <span className="font-bold text-amber-400">
+                    {(settings.exposureCompensation || 0) > 0 ? `+${settings.exposureCompensation}` : settings.exposureCompensation || 0} EV
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min={-2}
+                  max={2}
+                  step={0.2}
+                  value={settings.exposureCompensation || 0}
+                  onChange={(e) => handleExposureChange(parseFloat(e.target.value))}
+                  className="w-full accent-amber-400 h-1.5 bg-neutral-800 rounded-lg cursor-pointer"
+                />
               </div>
 
               {/* Audio Controls */}
@@ -578,7 +861,10 @@ export const BroadcastView: React.FC<BroadcastViewProps> = ({
                     Áudio & Microfone
                   </span>
                   <button
-                    onClick={() => onUpdateSettings({ ...settings, audioEnabled: !settings.audioEnabled })}
+                    onClick={() => {
+                      triggerHaptic(20);
+                      onUpdateSettings({ ...settings, audioEnabled: !settings.audioEnabled });
+                    }}
                     className={`p-1.5 rounded-lg border text-xs font-mono font-bold flex items-center space-x-1 transition-all ${
                       settings.audioEnabled
                         ? "bg-emerald-500/20 border-emerald-500 text-emerald-400"
@@ -687,7 +973,14 @@ export const BroadcastView: React.FC<BroadcastViewProps> = ({
           {/* Left: REC LOCAL Trigger */}
           <div className="flex items-center space-x-3">
             <button
-              onClick={isRecordingLocal ? onStopRecording : onStartRecording}
+              onClick={() => {
+                triggerHaptic(40);
+                if (isRecordingLocal) {
+                  onStopRecording();
+                } else {
+                  onStartRecording();
+                }
+              }}
               className={`px-3 sm:px-4 py-2 border font-mono text-xs font-bold uppercase tracking-wider rounded-xl flex items-center space-x-2 transition-all shadow-md active:scale-95 ${
                 isRecordingLocal
                   ? "bg-rose-950/80 border-rose-500 text-rose-300 animate-pulse shadow-rose-900/50"
@@ -703,7 +996,14 @@ export const BroadcastView: React.FC<BroadcastViewProps> = ({
           {/* Center: Tactile Master Broadcast Shutter Button */}
           <div className="flex flex-col items-center">
             <button
-              onClick={isLive ? onStopBroadcast : onStartBroadcast}
+              onClick={() => {
+                triggerHaptic(50);
+                if (isLive) {
+                  onStopBroadcast();
+                } else {
+                  onStartBroadcast();
+                }
+              }}
               className={`relative flex items-center justify-center w-16 h-16 sm:w-18 sm:h-18 rounded-full transition-all duration-300 active:scale-90 shadow-2xl ${
                 isLive
                   ? "bg-red-600 shadow-red-600/50 ring-4 ring-red-500/40"

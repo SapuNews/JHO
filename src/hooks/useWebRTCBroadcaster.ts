@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { BroadcastSettings, StreamStats, RemoteControlCommand } from "../types";
 
 export type SignalingState = "idle" | "connecting" | "connected" | "disconnected" | "error";
+export type ConnectionMode = "direct_ip" | "cloud_relay" | "unknown";
 
 export function useWebRTCBroadcaster(
   stream: MediaStream | null,
@@ -11,7 +12,9 @@ export function useWebRTCBroadcaster(
   const [isLive, setIsLive] = useState<boolean>(false);
   const [liveDuration, setLiveDuration] = useState<number>(0);
   const [signalingState, setSignalingState] = useState<SignalingState>("idle");
+  const [connectionMode, setConnectionMode] = useState<ConnectionMode>("unknown");
   const [signalingError, setSignalingError] = useState<string | null>(null);
+  const [connectionDiagnostics, setConnectionDiagnostics] = useState<string>("");
   const [stats, setStats] = useState<StreamStats>({
     isLive: false,
     isRecording: false,
@@ -39,30 +42,53 @@ export function useWebRTCBroadcaster(
   const pingIntervalRef = useRef<number | null>(null);
   const prevBytesSentRef = useRef<number>(0);
   const prevTimestampRef = useRef<number>(Date.now());
+  const activeWsUrlRef = useRef<string>("");
 
   // Room code from active connection config
   const activeConn = settings.connections.find((c) => c.id === settings.activeConnectionId) || settings.connections[0];
   const roomCode = activeConn?.roomCode || "larix-studio-1";
 
-  // Resolve target PC IP & WebSocket URL
-  const getTargetWsUrl = useCallback(() => {
+  // Resolve prioritized target PC IP & WebSocket URLs
+  const getCandidateWsUrls = useCallback(() => {
+    const urls: { url: string; mode: ConnectionMode; label: string }[] = [];
     const urlParams = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
     const paramPcIp = urlParams ? urlParams.get("pcIp") : null;
-    const targetIp = paramPcIp || settings.targetPcIp || (activeConn?.host && activeConn.host !== "127.0.0.1" && activeConn.host !== "localhost" ? activeConn.host : null);
+    const rawTargetIp = paramPcIp || settings.targetPcIp || (activeConn?.host && activeConn.host !== "127.0.0.1" && activeConn.host !== "localhost" ? activeConn.host : null);
     const targetPort = settings.targetPcPort || (activeConn?.port && activeConn.protocol === "webrtc_p2p" ? activeConn.port : 3000);
 
-    // If explicit PC IP is set or in standalone APK / Capacitor runtime
-    if (targetIp && targetIp !== "127.0.0.1" && targetIp !== "localhost") {
-      return `ws://${targetIp}:${targetPort}/ws`;
+    const isHttps = typeof window !== "undefined" && window.location.protocol === "https:";
+
+    // 1. Direct IP WebSocket (If target IP is specified and valid)
+    if (rawTargetIp && rawTargetIp !== "127.0.0.1" && rawTargetIp !== "localhost") {
+      const cleanIp = rawTargetIp.replace(/^https?:\/\//, "").replace(/\/.*$/, "").trim();
+      // On HTTPS pages, direct ws:// to private IPs may be blocked by mixed-content browser policies.
+      // We still attempt it, but also provide the host fallback.
+      urls.push({
+        url: `ws://${cleanIp}:${targetPort}/ws`,
+        mode: "direct_ip",
+        label: `IP Direto do PC (${cleanIp}:${targetPort})`,
+      });
     }
 
+    // 2. Current Host WebSocket (App Server / Relay / Cloud Room)
     if (typeof window !== "undefined" && window.location.host) {
-      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-      return `${protocol}//${window.location.host}/ws`;
+      const protocol = isHttps ? "wss:" : "ws:";
+      urls.push({
+        url: `${protocol}//${window.location.host}/ws`,
+        mode: "cloud_relay",
+        label: `Servidor da Aplicação / Sala P2P (${roomCode})`,
+      });
     }
 
-    return `ws://127.0.0.1:3000/ws`;
-  }, [settings.targetPcIp, settings.targetPcPort, activeConn]);
+    // 3. Localhost fallback
+    urls.push({
+      url: `ws://127.0.0.1:3000/ws`,
+      mode: "direct_ip",
+      label: `Localhost (127.0.0.1:3000)`,
+    });
+
+    return urls;
+  }, [settings.targetPcIp, settings.targetPcPort, activeConn, roomCode]);
 
   // Battery status API
   useEffect(() => {
@@ -82,12 +108,15 @@ export function useWebRTCBroadcaster(
     }
   }, []);
 
-  // WebRTC PeerConnection creation helper
+  // WebRTC PeerConnection creation helper with robust STUN fallback
   const createPeerConnection = useCallback((peerId: string = "default-pc") => {
     const pc = new RTCPeerConnection({
       iceServers: [
         { urls: "stun:stun.l.google.com:19302" },
         { urls: "stun:stun1.l.google.com:19302" },
+        { urls: "stun:stun2.l.google.com:19302" },
+        { urls: "stun:stun3.l.google.com:19302" },
+        { urls: "stun:stun4.l.google.com:19302" },
       ],
       iceTransportPolicy: "all",
       bundlePolicy: "max-bundle",
@@ -170,87 +199,163 @@ export function useWebRTCBroadcaster(
     }
   }, [createPeerConnection, roomCode, settings.bitrateKbps]);
 
-  // Connect WebSocket Signaling to PC
+  // Connect WebSocket Signaling to PC or Cloud Relay with Auto-Fallback
   const connectSignaling = useCallback(() => {
-    const wsUrl = getTargetWsUrl();
-    console.log("Connecting Broadcaster signaling to:", wsUrl);
+    const candidateEndpoints = getCandidateWsUrls();
+    let currentCandidateIndex = 0;
+
     setSignalingState("connecting");
     setSignalingError(null);
 
-    try {
-      const ws = new WebSocket(wsUrl);
-      wsRef.current = ws;
-
-      ws.onopen = () => {
-        console.log("Broadcaster WebSocket connected to room:", roomCode);
-        setSignalingState("connected");
-        setSignalingError(null);
-
-        ws.send(
-          JSON.stringify({
-            type: "join",
-            role: "broadcaster",
-            room: roomCode,
-          })
-        );
-
-        // Ping heartbeat every 10s to keep connection open
-        if (pingIntervalRef.current) clearInterval(pingIntervalRef.current);
-        pingIntervalRef.current = window.setInterval(() => {
-          if (ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: "ping", room: roomCode }));
-          }
-        }, 10000);
-
-        // Send offer immediately
-        sendOffer("default-pc");
-      };
-
-      ws.onmessage = async (event) => {
-        try {
-          const msg = JSON.parse(event.data);
-          const { type, payload } = msg;
-
-          if (type === "peer-joined") {
-            console.log("Receiver joined room, sending offer...");
-            sendOffer(payload?.peerId || "default-pc");
-          } else if (type === "answer") {
-            const pc = peerConnectionsRef.current.get(payload.peerId || "default-pc");
-            if (pc && pc.signalingState !== "closed") {
-              await pc.setRemoteDescription(new RTCSessionDescription(payload.sdp));
-            }
-          } else if (type === "ice-candidate") {
-            const pc = peerConnectionsRef.current.get(payload.peerId || "default-pc");
-            if (pc && payload.candidate) {
-              await pc.addIceCandidate(new RTCIceCandidate(payload.candidate)).catch((e) => console.warn(e));
-            }
-          } else if (type === "remote-cmd" && onRemoteCommand) {
-            onRemoteCommand(payload);
-          }
-        } catch (e) {
-          console.error("Broadcaster error processing signaling message:", e);
-        }
-      };
-
-      ws.onerror = (err) => {
-        console.warn("Broadcaster WebSocket error:", err);
+    const tryConnect = (index: number) => {
+      if (index >= candidateEndpoints.length) {
         setSignalingState("error");
-        setSignalingError(`Não foi possível conectar ao IP do PC (${wsUrl}). Verifique se o servidor está aberto no PC e no mesmo Wi-Fi.`);
+        setSignalingError("Não foi possível conectar ao PC nem ao servidor de sinalização. Verifique sua rede Wi-Fi.");
+        return;
+      }
+
+      const candidate = candidateEndpoints[index];
+      activeWsUrlRef.current = candidate.url;
+      console.log(`Tentando conectar WebSocket [${index + 1}/${candidateEndpoints.length}]:`, candidate.url, `(${candidate.label})`);
+      setConnectionDiagnostics(`Conectando: ${candidate.label}...`);
+
+      let connectionHandshakeTimeout: any = null;
+      let hasOpened = false;
+      let isCleanedUp = false;
+
+      const cleanupCurrentWs = (sock: WebSocket | null) => {
+        if (!sock || isCleanedUp) return;
+        isCleanedUp = true;
+        if (connectionHandshakeTimeout) {
+          clearTimeout(connectionHandshakeTimeout);
+          connectionHandshakeTimeout = null;
+        }
+        sock.onopen = null;
+        sock.onmessage = null;
+        sock.onerror = null;
+        sock.onclose = null;
+        try {
+          if (sock.readyState === WebSocket.OPEN) {
+            sock.close();
+          } else if (sock.readyState === WebSocket.CONNECTING) {
+            sock.onopen = () => {
+              try { sock.close(); } catch (e) {}
+            };
+          }
+        } catch (e) {}
       };
 
-      ws.onclose = () => {
-        console.log("Broadcaster WebSocket disconnected");
-        setSignalingState("disconnected");
-        if (pingIntervalRef.current) {
-          clearInterval(pingIntervalRef.current);
-          pingIntervalRef.current = null;
-        }
-      };
-    } catch (err: any) {
-      setSignalingState("error");
-      setSignalingError(err?.message || "Erro ao conectar ao IP do PC");
-    }
-  }, [getTargetWsUrl, roomCode, sendOffer, onRemoteCommand]);
+      try {
+        const ws = new WebSocket(candidate.url);
+        wsRef.current = ws;
+
+        // Set 3.5-second timeout to fall back if the target IP doesn't respond
+        connectionHandshakeTimeout = setTimeout(() => {
+          if (!hasOpened) {
+            console.warn(`Timeout ao conectar a ${candidate.url}. Tentando próximo endpoint...`);
+            cleanupCurrentWs(ws);
+            tryConnect(index + 1);
+          }
+        }, 3500);
+
+        ws.onopen = () => {
+          if (isCleanedUp) return;
+          hasOpened = true;
+          if (connectionHandshakeTimeout) {
+            clearTimeout(connectionHandshakeTimeout);
+            connectionHandshakeTimeout = null;
+          }
+          console.log(`Broadcaster WebSocket conectado com sucesso em: ${candidate.url} (Modo: ${candidate.mode})`);
+          setSignalingState("connected");
+          setConnectionMode(candidate.mode);
+          setSignalingError(null);
+          setConnectionDiagnostics(`Conectado com sucesso: ${candidate.label}`);
+
+          try {
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(
+                JSON.stringify({
+                  type: "join",
+                  role: "broadcaster",
+                  room: roomCode,
+                })
+              );
+            }
+          } catch (e) {}
+
+          // Ping heartbeat every 8s to keep connection alive
+          if (pingIntervalRef.current) clearInterval(pingIntervalRef.current);
+          pingIntervalRef.current = window.setInterval(() => {
+            if (ws.readyState === WebSocket.OPEN) {
+              try {
+                ws.send(JSON.stringify({ type: "ping", room: roomCode }));
+              } catch (e) {}
+            }
+          }, 8000);
+
+          // Send WebRTC offer immediately
+          sendOffer("default-pc");
+        };
+
+        ws.onmessage = async (event) => {
+          if (isCleanedUp) return;
+          try {
+            const msg = JSON.parse(event.data);
+            const { type, payload } = msg;
+
+            if (type === "peer-joined") {
+              console.log("Receptor entrou na sala, enviando oferta WebRTC...");
+              sendOffer(payload?.peerId || "default-pc");
+            } else if (type === "answer") {
+              const pc = peerConnectionsRef.current.get(payload.peerId || "default-pc");
+              if (pc && pc.signalingState !== "closed") {
+                await pc.setRemoteDescription(new RTCSessionDescription(payload.sdp));
+              }
+            } else if (type === "ice-candidate") {
+              const pc = peerConnectionsRef.current.get(payload.peerId || "default-pc");
+              if (pc && payload.candidate && pc.signalingState !== "closed") {
+                await pc.addIceCandidate(new RTCIceCandidate(payload.candidate)).catch((e) => console.warn(e));
+              }
+            } else if (type === "remote-cmd" && onRemoteCommand) {
+              onRemoteCommand(payload);
+            }
+          } catch (e) {
+            console.error("Erro ao processar mensagem do WebSocket:", e);
+          }
+        };
+
+        ws.onerror = (err) => {
+          console.warn(`Erro no WebSocket (${candidate.url}):`, err);
+          if (connectionHandshakeTimeout) {
+            clearTimeout(connectionHandshakeTimeout);
+            connectionHandshakeTimeout = null;
+          }
+          if (!hasOpened) {
+            cleanupCurrentWs(ws);
+            // Immediately try next candidate if direct IP failed
+            tryConnect(index + 1);
+          }
+        };
+
+        ws.onclose = () => {
+          console.log(`WebSocket desconectado (${candidate.url})`);
+          if (pingIntervalRef.current) {
+            clearInterval(pingIntervalRef.current);
+            pingIntervalRef.current = null;
+          }
+          if (hasOpened && !isCleanedUp) {
+            setSignalingState("disconnected");
+          }
+        };
+      } catch (err: any) {
+        console.warn(`Exceção ao instanciar WebSocket (${candidate.url}):`, err);
+        if (connectionHandshakeTimeout) clearTimeout(connectionHandshakeTimeout);
+        tryConnect(index + 1);
+      }
+    };
+
+    tryConnect(0);
+  }, [getCandidateWsUrls, roomCode, sendOffer, onRemoteCommand]);
 
   // Start Streaming Broadcast
   const startBroadcast = useCallback(() => {
@@ -345,7 +450,20 @@ export function useWebRTCBroadcaster(
     peerConnectionsRef.current.clear();
 
     if (wsRef.current) {
-      wsRef.current.close();
+      const sock = wsRef.current;
+      sock.onopen = null;
+      sock.onmessage = null;
+      sock.onerror = null;
+      sock.onclose = null;
+      try {
+        if (sock.readyState === WebSocket.OPEN) {
+          sock.close();
+        } else if (sock.readyState === WebSocket.CONNECTING) {
+          sock.onopen = () => {
+            try { sock.close(); } catch (e) {}
+          };
+        }
+      } catch (e) {}
       wsRef.current = null;
     }
 
@@ -380,11 +498,13 @@ export function useWebRTCBroadcaster(
     liveDuration,
     signalingState,
     signalingError,
+    connectionMode,
+    connectionDiagnostics,
     stats,
     startBroadcast,
     stopBroadcast,
     connectSignaling,
     roomCode,
-    resolvedWsUrl: getTargetWsUrl(),
+    resolvedWsUrl: activeWsUrlRef.current || (getCandidateWsUrls()[0]?.url || ""),
   };
 }

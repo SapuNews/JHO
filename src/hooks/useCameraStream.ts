@@ -203,6 +203,21 @@ export function useCameraStream(settings: BroadcastSettings) {
     }
   }, [stream]);
 
+  // Apply exposure compensation
+  const setExposureCompensation = useCallback(async (exposureValue: number) => {
+    if (!stream) return;
+    const videoTrack = stream.getVideoTracks()[0];
+    if (videoTrack && typeof (videoTrack as any).applyConstraints === "function") {
+      try {
+        await (videoTrack as any).applyConstraints({
+          advanced: [{ exposureCompensation: exposureValue }],
+        });
+      } catch (e) {
+        console.warn("Exposure constraint error:", e);
+      }
+    }
+  }, [stream]);
+
   // Switch Camera lens (Flip Front / Back)
   const flipCamera = useCallback(async () => {
     if (devices.length >= 2) {
@@ -318,6 +333,7 @@ export function useCameraStream(settings: BroadcastSettings) {
     startStream,
     toggleTorch,
     setZoomLevel,
+    setExposureCompensation,
     flipCamera,
     startRecording,
     stopRecording,

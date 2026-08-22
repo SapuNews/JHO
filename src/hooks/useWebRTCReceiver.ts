@@ -29,6 +29,9 @@ export function useWebRTCReceiver(roomCode: string = "larix-studio-1") {
       iceServers: [
         { urls: "stun:stun.l.google.com:19302" },
         { urls: "stun:stun1.l.google.com:19302" },
+        { urls: "stun:stun2.l.google.com:19302" },
+        { urls: "stun:stun3.l.google.com:19302" },
+        { urls: "stun:stun4.l.google.com:19302" },
       ],
       iceTransportPolicy: "all",
       bundlePolicy: "max-bundle",
@@ -142,8 +145,24 @@ export function useWebRTCReceiver(roomCode: string = "larix-studio-1") {
 
     return () => {
       if (statsIntervalRef.current) clearInterval(statsIntervalRef.current);
-      if (pc) pc.close();
-      if (ws) ws.close();
+      if (pc) {
+        try { pc.close(); } catch (e) {}
+      }
+      if (ws) {
+        ws.onopen = null;
+        ws.onmessage = null;
+        ws.onerror = null;
+        ws.onclose = null;
+        try {
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.close();
+          } else if (ws.readyState === WebSocket.CONNECTING) {
+            ws.onopen = () => {
+              try { ws.close(); } catch (e) {}
+            };
+          }
+        } catch (e) {}
+      }
     };
   }, [roomCode]);
 

@@ -180,6 +180,7 @@ export default function App() {
     audioLevel,
     toggleTorch,
     setZoomLevel,
+    setExposureCompensation,
     flipCamera,
     startRecording,
     stopRecording,
@@ -216,6 +217,7 @@ export default function App() {
     stats,
     signalingState,
     signalingError,
+    connectionMode,
     resolvedWsUrl,
     startBroadcast,
     stopBroadcast,
@@ -237,6 +239,7 @@ export default function App() {
           signalingState={signalingState}
           signalingError={signalingError}
           resolvedWsUrl={resolvedWsUrl}
+          connectionMode={connectionMode}
           onStartBroadcast={startBroadcast}
           onStopBroadcast={stopBroadcast}
           isRecordingLocal={isRecordingLocal}
@@ -246,6 +249,7 @@ export default function App() {
           onFlipCamera={flipCamera}
           onToggleTorch={toggleTorch}
           onSetZoom={setZoomLevel}
+          onSetExposure={setExposureCompensation}
           onTakeSnapshot={takeSnapshot}
           audioLevel={audioLevel}
           onOpenSettings={() => setIsSettingsOpen(true)}
