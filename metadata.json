@@ -1,0 +1,6 @@
+{
+  "name": "SN-trean",
+  "description": "Aplicativo profissional de streaming de vídeo e áudio de ultra-baixa latência tipo Larix Broadcaster. Transmita da câmera do smartphone para PC e OBS Studio via Wi-Fi local sem internet com suporte a RTMP, RTSP, SRT e WebRTC P2P.",
+  "requestFramePermissions": ["camera", "microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
