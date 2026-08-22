@@ -156,25 +156,78 @@ export const ReceiverView: React.FC<ReceiverViewProps> = ({
     }
   };
 
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && isCleanMode) {
+        setIsCleanMode(false);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isCleanMode]);
+
   const obsBrowserUrl = `${window.location.origin}/?mode=receiver&room=${roomCode}&clean=true`;
 
   if (isCleanMode) {
-    // Pure Clean View for OBS Studio Browser Source
+    // Pure Clean View for OBS Studio Browser Source, vMix, Wirecast, or Fullscreen Projector
     return (
-      <div className="relative w-screen h-screen bg-black overflow-hidden flex items-center justify-center">
+      <div className="relative w-screen h-screen bg-black overflow-hidden flex items-center justify-center group font-sans select-none">
+        {/* Pure Camera Video Feed - No overlays burned in */}
         <video
           ref={videoRef}
           autoPlay
           playsInline
           muted={isAudioMuted}
-          className="w-full h-full object-contain"
+          className="w-full h-full object-contain bg-black"
         />
+
+        {/* Minimal Non-Intrusive Floating HUD (Visible ONLY on Mouse Hover / Hidden automatically in OBS) */}
+        <div className="absolute top-4 right-4 z-40 flex items-center space-x-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-auto bg-neutral-950/80 backdrop-blur-md p-2 rounded-xl border border-white/20 shadow-2xl">
+          <div className="px-2.5 py-1 bg-emerald-950/80 border border-emerald-500/50 rounded-lg text-emerald-400 font-mono text-[10px] font-bold uppercase flex items-center space-x-1.5">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+            <span>CLEAN FEED ATIVO</span>
+          </div>
+
+          <button
+            onClick={() => setIsAudioMuted(!isAudioMuted)}
+            className="p-1.5 rounded-lg bg-neutral-900 hover:bg-neutral-800 text-neutral-200 hover:text-white border border-white/10"
+            title={isAudioMuted ? "Desmutar Áudio" : "Mutar Áudio"}
+          >
+            {isAudioMuted ? <VolumeX className="w-4 h-4 text-red-400" /> : <Volume2 className="w-4 h-4 text-emerald-400" />}
+          </button>
+
+          <button
+            onClick={toggleFullscreen}
+            className="p-1.5 rounded-lg bg-neutral-900 hover:bg-neutral-800 text-neutral-200 hover:text-white border border-white/10"
+            title="Alternar Tela Cheia"
+          >
+            {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+          </button>
+
+          <button
+            onClick={() => setIsCleanMode(false)}
+            className="px-3 py-1.5 rounded-lg bg-white hover:bg-neutral-200 text-black font-mono font-bold text-[10px] uppercase tracking-wider transition-colors shadow-md"
+            title="Voltar ao Painel de Controle (ESC)"
+          >
+            Sair do Clean Feed (ESC)
+          </button>
+        </div>
+
+        {/* Standby / Connecting Screen when not connected yet */}
         {!isConnected && (
-          <div className="absolute inset-0 flex items-center justify-center bg-black/80 text-white font-mono text-sm">
-            <div className="text-center space-y-2">
-              <div className="w-8 h-8 border-2 border-green-500 border-t-transparent rounded-full animate-spin mx-auto" />
-              <p>{statusMessage}</p>
-              <p className="text-xs text-neutral-500">Sala: {roomCode}</p>
+          <div className="absolute inset-0 flex items-center justify-center bg-black/90 text-white font-mono text-sm p-6 text-center">
+            <div className="max-w-md space-y-3 p-6 bg-neutral-950 border border-white/15 rounded-2xl shadow-2xl">
+              <div className="w-8 h-8 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin mx-auto" />
+              <p className="font-bold text-white uppercase text-xs tracking-wider">{statusMessage}</p>
+              <p className="text-xs text-neutral-400">
+                Aguardando transmissão do APK na sala: <span className="text-emerald-400 font-bold">{roomCode}</span>
+              </p>
+              <button
+                onClick={() => setIsCleanMode(false)}
+                className="mt-2 px-4 py-2 bg-neutral-900 hover:bg-neutral-800 border border-white/20 rounded-xl text-neutral-300 text-xs uppercase font-bold"
+              >
+                Voltar ao Painel
+              </button>
             </div>
           </div>
         )}
@@ -212,22 +265,30 @@ export const ReceiverView: React.FC<ReceiverViewProps> = ({
         {/* Action Buttons */}
         <div className="flex items-center space-x-2">
           <button
+            onClick={() => setIsCleanMode(true)}
+            className="px-3.5 py-2 bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-500/60 text-emerald-400 text-xs uppercase font-bold tracking-wider rounded-lg flex items-center space-x-1.5 transition-all shadow-md active:scale-95"
+            title="Abrir imagem 100% limpa sem botões para OBS / vMix / Projetor"
+          >
+            <Tv className="w-3.5 h-3.5" />
+            <span>⚡ Modo Clean Feed (OBS/vMix)</span>
+          </button>
+          <button
             onClick={() => setShowQrModal(true)}
-            className="px-3 py-2 bg-neutral-900 hover:bg-neutral-800 text-green-400 text-xs uppercase font-bold tracking-wider border border-green-500/40 flex items-center space-x-1.5 transition-colors"
+            className="px-3 py-2 bg-neutral-900 hover:bg-neutral-800 text-green-400 text-xs uppercase font-bold tracking-wider border border-green-500/40 rounded-lg flex items-center space-x-1.5 transition-colors"
           >
             <QrCode className="w-3.5 h-3.5" />
             <span>QR Code APK</span>
           </button>
           <button
             onClick={onOpenWifiGuide}
-            className="px-3 py-2 bg-neutral-900 hover:bg-neutral-800 text-neutral-300 text-xs uppercase font-bold tracking-wider border border-neutral-800 flex items-center space-x-1.5 transition-colors"
+            className="px-3 py-2 bg-neutral-900 hover:bg-neutral-800 text-neutral-300 text-xs uppercase font-bold tracking-wider border border-neutral-800 rounded-lg flex items-center space-x-1.5 transition-colors"
           >
             <Wifi className="w-3.5 h-3.5 text-green-400" />
             <span>Guia Sem Internet</span>
           </button>
           <button
             onClick={onSwitchToBroadcaster}
-            className="px-3 py-2 bg-white hover:bg-neutral-200 text-black text-xs font-black uppercase tracking-wider flex items-center space-x-1.5 transition-colors shadow-md"
+            className="px-3 py-2 bg-white hover:bg-neutral-200 text-black text-xs font-black uppercase tracking-wider rounded-lg flex items-center space-x-1.5 transition-colors shadow-md"
           >
             <Camera className="w-3.5 h-3.5" />
             <span>Modo Transmissor</span>
@@ -334,8 +395,17 @@ export const ReceiverView: React.FC<ReceiverViewProps> = ({
                 />
               </div>
 
-              {/* Action Buttons: PC REC, Snapshot, Fullscreen */}
+              {/* Action Buttons: Clean Mode, PC REC, Snapshot, Fullscreen */}
               <div className="flex items-center space-x-2">
+                <button
+                  onClick={() => setIsCleanMode(true)}
+                  className="px-3 py-1.5 bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-500/60 text-emerald-400 text-xs font-mono font-bold uppercase tracking-wider flex items-center space-x-1.5 transition-colors"
+                  title="Entrar no Modo Clean Feed (Vídeo 100% Limpo sem Botões)"
+                >
+                  <Tv className="w-3.5 h-3.5" />
+                  <span>CLEAN FEED (OBS/VMIX)</span>
+                </button>
+
                 <button
                   onClick={isRecordingOnPc ? stopPcRecording : startPcRecording}
                   disabled={!isConnected}
@@ -462,40 +532,74 @@ export const ReceiverView: React.FC<ReceiverViewProps> = ({
             </div>
           </div>
 
-          {/* OBS Studio Integration Panel */}
+          {/* OBS Studio, vMix & Broadcast Clean Feed Integration Panel */}
           <div className="p-5 bg-neutral-950 border border-neutral-800 space-y-4">
             <div className="flex items-center justify-between border-b border-neutral-800 pb-3">
               <h3 className="text-xs uppercase font-black tracking-widest text-white flex items-center space-x-2">
-                <Tv className="w-4 h-4 text-green-400" />
-                <span>Fonte do OBS Studio</span>
+                <Tv className="w-4 h-4 text-emerald-400" />
+                <span>Recepção Limpa (OBS / vMix / Projetor)</span>
               </h3>
+              <span className="text-[9px] px-2 py-0.5 border border-emerald-500/40 bg-emerald-950/60 text-emerald-400 font-mono font-bold uppercase">
+                CLEAN FEED
+              </span>
             </div>
-            <p className="text-xs text-neutral-400 leading-relaxed">
-              Adicione a URL abaixo como uma <strong>Fonte de Navegador (Browser Source)</strong> no OBS para capturar o vídeo limpo sem botões na transmissão:
-            </p>
+
+            {/* Clean Feed Guarantee Banner */}
+            <div className="p-3 bg-emerald-950/30 border border-emerald-500/30 rounded-xl space-y-1 text-xs">
+              <div className="flex items-center space-x-1.5 text-emerald-400 font-bold font-mono">
+                <ShieldCheck className="w-4 h-4" />
+                <span>Garantia de Sinal Limpo (Sem Botões)</span>
+              </div>
+              <p className="text-neutral-300 text-[11px] leading-relaxed">
+                O aplicativo transmite o sinal puro do sensor óptico da câmera via WebRTC. <strong>Nenhum botão, menu, barra ou indicador do celular aparece no vídeo recebido no PC.</strong>
+              </p>
+            </div>
 
             <div className="space-y-3">
-              <div className="flex items-center space-x-2">
-                <input
-                  type="text"
-                  readOnly
-                  value={obsBrowserUrl}
-                  className="flex-1 bg-black border border-neutral-800 px-3 py-2 text-xs font-mono text-green-400 select-all"
-                />
-                <button
-                  onClick={() => copyText(obsBrowserUrl, "obsUrl")}
-                  className="px-4 py-2 bg-white hover:bg-neutral-200 text-black text-xs font-black uppercase tracking-wider flex items-center space-x-1.5 transition-colors shrink-0"
-                >
-                  {copiedKey === "obsUrl" ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                  <span>{copiedKey === "obsUrl" ? "COPIADO" : "COPIAR"}</span>
-                </button>
+              <div>
+                <label className="text-[10px] text-neutral-400 font-mono uppercase block mb-1">
+                  URL de Entrada para OBS Studio (Browser Source) / vMix:
+                </label>
+                <div className="flex items-center space-x-2">
+                  <input
+                    type="text"
+                    readOnly
+                    value={obsBrowserUrl}
+                    className="flex-1 bg-black border border-neutral-800 px-3 py-2 text-xs font-mono text-emerald-400 select-all rounded-lg"
+                  />
+                  <button
+                    onClick={() => copyText(obsBrowserUrl, "obsUrl")}
+                    className="px-4 py-2 bg-white hover:bg-neutral-200 text-black text-xs font-black uppercase tracking-wider flex items-center space-x-1.5 transition-colors shrink-0 rounded-lg shadow-md"
+                  >
+                    {copiedKey === "obsUrl" ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                    <span>{copiedKey === "obsUrl" ? "COPIADO" : "COPIAR"}</span>
+                  </button>
+                </div>
               </div>
 
-              <div className="p-3 bg-neutral-900 border border-neutral-800 text-[11px] font-mono text-neutral-400 space-y-1">
-                <div><strong>LARGURA:</strong> 1920 &nbsp; <strong>ALTURA:</strong> 1080</div>
-                <div><strong>FPS:</strong> 60 OU 30</div>
-                <div><strong>ÁUDIO:</strong> Marque "Controlar áudio via OBS"</div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] font-mono">
+                <div className="p-2.5 bg-neutral-900/80 border border-neutral-800 rounded-lg space-y-1">
+                  <strong className="text-white block text-[10px] uppercase tracking-wider text-emerald-400">Como usar no OBS Studio:</strong>
+                  <p className="text-neutral-400 text-[10px]">1. Adicione Fonte &gt; <strong>Navegador (Browser)</strong></p>
+                  <p className="text-neutral-400 text-[10px]">2. Cole a URL limpa acima</p>
+                  <p className="text-neutral-400 text-[10px]">3. Ajuste <strong>1920x1080</strong> @ 60 FPS</p>
+                </div>
+
+                <div className="p-2.5 bg-neutral-900/80 border border-neutral-800 rounded-lg space-y-1">
+                  <strong className="text-white block text-[10px] uppercase tracking-wider text-emerald-400">Como usar no vMix:</strong>
+                  <p className="text-neutral-400 text-[10px]">1. Clique em <strong>Add Input &gt; Web Browser</strong></p>
+                  <p className="text-neutral-400 text-[10px]">2. Cole a URL limpa acima</p>
+                  <p className="text-neutral-400 text-[10px]">3. Resolução 1920x1080 (Somente Vídeo Limpo)</p>
+                </div>
               </div>
+
+              <button
+                onClick={() => setIsCleanMode(true)}
+                className="w-full py-2.5 bg-neutral-900 hover:bg-neutral-800 border border-emerald-500/50 hover:border-emerald-400 text-emerald-400 text-xs font-mono font-bold uppercase tracking-wider rounded-lg flex items-center justify-center space-x-2 transition-all shadow-md"
+              >
+                <Tv className="w-4 h-4" />
+                <span>Abrir Tela Cheia Limpa no Computador</span>
+              </button>
             </div>
           </div>
 

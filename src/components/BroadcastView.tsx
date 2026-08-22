@@ -200,10 +200,9 @@ export const BroadcastView: React.FC<BroadcastViewProps> = ({
             autoPlay
             playsInline
             muted
-            className={`w-full h-full object-cover transition-transform duration-200 ${
-              settings.facingMode === "user" ? "scale-x-[-1]" : ""
-            }`}
+            className="w-full h-full object-cover transition-transform duration-200 origin-center"
             style={{
+              transform: `scale(${settings.zoom || 1.0}) ${settings.facingMode === "user" ? "scaleX(-1)" : ""}`,
               aspectRatio:
                 settings.aspectRatio === "16:9"
                   ? "16/9"
@@ -323,6 +322,12 @@ export const BroadcastView: React.FC<BroadcastViewProps> = ({
             <div className="px-2 py-0.5 bg-black/40 border border-white/10 rounded-full flex items-center space-x-1">
               <span className="text-neutral-500 uppercase">BIT</span>
               <span className="font-bold text-emerald-400">{settings.bitrateKbps}K</span>
+            </div>
+
+            {/* Clean Feed Indicator */}
+            <div className="hidden lg:flex items-center space-x-1 px-2 py-0.5 bg-emerald-950/60 border border-emerald-500/40 rounded-full text-emerald-400 font-mono text-[9px] font-bold uppercase" title="O sinal enviado para o PC e OBS é 100% limpo, sem botões ou menus da câmera">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+              <span>SAÍDA PC: VÍDEO LIMPO (CLEAN FEED)</span>
             </div>
 
             {/* Compact Horizontal VU Meter */}

@@ -57,7 +57,7 @@ export function useCameraStream(settings: BroadcastSettings) {
       };
 
       if (activeDeviceId) {
-        videoConstraints.deviceId = { exact: activeDeviceId };
+        videoConstraints.deviceId = { ideal: activeDeviceId };
       } else {
         videoConstraints.facingMode = { ideal: settings.facingMode };
       }
@@ -94,6 +94,18 @@ export function useCameraStream(settings: BroadcastSettings) {
             max: capabilities.zoom.max || 8,
             step: capabilities.zoom.step || 0.1,
           });
+        }
+        // Apply initial zoom if supported
+        if (settings.zoom > 1 && capabilities.zoom && typeof (videoTrack as any).applyConstraints === "function") {
+          (videoTrack as any).applyConstraints({
+            advanced: [{ zoom: settings.zoom }],
+          }).catch(() => {});
+        }
+        // Apply initial torch if requested
+        if (settings.torch && capabilities.torch && typeof (videoTrack as any).applyConstraints === "function") {
+          (videoTrack as any).applyConstraints({
+            advanced: [{ torch: true }],
+          }).catch(() => {});
         }
       }
 
@@ -193,10 +205,11 @@ export function useCameraStream(settings: BroadcastSettings) {
 
   // Switch Camera lens (Flip Front / Back)
   const flipCamera = useCallback(async () => {
-    if (devices.length < 2) return;
-    const currentIndex = devices.findIndex((d) => d.deviceId === activeDeviceId);
-    const nextIndex = (currentIndex + 1) % devices.length;
-    setActiveDeviceId(devices[nextIndex].deviceId);
+    if (devices.length >= 2) {
+      const currentIndex = devices.findIndex((d) => d.deviceId === activeDeviceId);
+      const nextIndex = (currentIndex + 1) % devices.length;
+      setActiveDeviceId(devices[nextIndex].deviceId);
+    }
   }, [devices, activeDeviceId]);
 
   // Local Recording (Simultaneous Broadcast & High-Res Storage)
@@ -234,7 +247,7 @@ export function useCameraStream(settings: BroadcastSettings) {
         a.href = url;
         const now = new Date();
         const timestamp = now.toISOString().replace(/[:.]/g, "-");
-        a.download = `larix-broadcast-${timestamp}.${selectedMime.includes("mp4") ? "mp4" : "webm"}`;
+        a.download = `sn-trean-broadcast-${timestamp}.${selectedMime.includes("mp4") ? "mp4" : "webm"}`;
         a.click();
         URL.revokeObjectURL(url);
       };
@@ -276,16 +289,16 @@ export function useCameraStream(settings: BroadcastSettings) {
     videoElem.play();
 
     const canvas = document.createElement("canvas");
-    const settings = videoTrack.getSettings();
-    canvas.width = settings.width || 1920;
-    canvas.height = settings.height || 1080;
+    const trackSettings = videoTrack.getSettings();
+    canvas.width = trackSettings.width || 1920;
+    canvas.height = trackSettings.height || 1080;
     const ctx = canvas.getContext("2d");
     if (ctx) {
       ctx.drawImage(videoElem, 0, 0, canvas.width, canvas.height);
       const dataUrl = canvas.toDataURL("image/jpeg", 0.95);
       const a = document.createElement("a");
       a.href = dataUrl;
-      a.download = `larix-snapshot-${Date.now()}.jpg`;
+      a.download = `sn-trean-snapshot-${Date.now()}.jpg`;
       a.click();
       return dataUrl;
     }
